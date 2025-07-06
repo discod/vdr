@@ -41,12 +41,12 @@ export const createDataRoom = baseProcedure
       },
     });
 
-    // Give the creator admin access
+    // Give the creator ROOM_OWNER access with full permissions
     await db.userRoomAccess.create({
       data: {
         userId: user.id,
         dataRoomId: dataRoom.id,
-        role: "ADMIN",
+        role: "ROOM_OWNER",
         canView: true,
         canDownload: true,
         canPrint: true,
@@ -55,6 +55,9 @@ export const createDataRoom = baseProcedure
         canInvite: true,
         canManageQA: true,
         canViewAudit: true,
+        canManageUsers: true,
+        canManageGroups: true,
+        canManageRoom: true,
       },
     });
 

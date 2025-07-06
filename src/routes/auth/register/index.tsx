@@ -1,13 +1,20 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
+import { z } from "zod";
 import { RegisterForm } from "~/components/auth/RegisterForm";
 import { useIsAuthenticated } from "~/stores/auth";
 
+const registerSearchSchema = z.object({
+  invitation: z.string().optional(),
+});
+
 export const Route = createFileRoute("/auth/register/")({
   component: RegisterPage,
+  validateSearch: registerSearchSchema,
 });
 
 function RegisterPage() {
   const isAuthenticated = useIsAuthenticated();
+  const { invitation } = Route.useSearch();
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" />;
@@ -23,7 +30,7 @@ function RegisterPage() {
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <RegisterForm />
+        <RegisterForm invitationToken={invitation} />
         
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">

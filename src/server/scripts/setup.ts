@@ -82,6 +82,216 @@ async function setup() {
     }
   }
 
+  // Create default permission templates
+  const permissionTemplates = [
+    {
+      name: "Standard Admin",
+      description: "Full administrative access for room management",
+      role: "ADMIN",
+      isDefault: true,
+      isSystem: true,
+      canView: true,
+      canDownload: true,
+      canPrint: true,
+      canUpload: true,
+      canEdit: true,
+      canInvite: true,
+      canManageQA: true,
+      canViewAudit: true,
+      canManageUsers: true,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 60,
+    },
+    {
+      name: "Standard Contributor",
+      description: "Can upload and organize documents",
+      role: "CONTRIBUTOR",
+      isDefault: true,
+      isSystem: true,
+      canView: true,
+      canDownload: true,
+      canPrint: true,
+      canUpload: true,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: true,
+      canViewAudit: false,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 30,
+    },
+    {
+      name: "Standard Viewer",
+      description: "Basic viewing access with download permissions",
+      role: "VIEWER",
+      isDefault: true,
+      isSystem: true,
+      canView: true,
+      canDownload: true,
+      canPrint: true,
+      canUpload: false,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: false,
+      canViewAudit: false,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 30,
+    },
+    {
+      name: "Restricted Viewer",
+      description: "View-only access without download permissions",
+      role: "VIEWER",
+      isDefault: false,
+      isSystem: true,
+      canView: true,
+      canDownload: false,
+      canPrint: false,
+      canUpload: false,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: false,
+      canViewAudit: false,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 15,
+    },
+    {
+      name: "Standard Auditor",
+      description: "Read-only access with audit capabilities",
+      role: "AUDITOR",
+      isDefault: true,
+      isSystem: true,
+      canView: true,
+      canDownload: false,
+      canPrint: false,
+      canUpload: false,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: false,
+      canViewAudit: true,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 60,
+    },
+    {
+      name: "Finance Team",
+      description: "Specialized access for financial due diligence",
+      role: "CONTRIBUTOR",
+      isDefault: false,
+      isSystem: false,
+      canView: true,
+      canDownload: true,
+      canPrint: true,
+      canUpload: true,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: true,
+      canViewAudit: false,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 45,
+    },
+    {
+      name: "Legal Team",
+      description: "Specialized access for legal due diligence",
+      role: "CONTRIBUTOR",
+      isDefault: false,
+      isSystem: false,
+      canView: true,
+      canDownload: true,
+      canPrint: true,
+      canUpload: true,
+      canEdit: false,
+      canInvite: false,
+      canManageQA: true,
+      canViewAudit: false,
+      canManageUsers: false,
+      canManageGroups: false,
+      canManageRoom: false,
+      allowedCountries: [],
+      sessionTimeout: 45,
+    },
+  ];
+
+  for (const template of permissionTemplates) {
+    const existing = await db.permissionTemplate.findFirst({
+      where: { name: template.name }
+    });
+    
+    if (!existing) {
+      await db.permissionTemplate.create({
+        data: template
+      });
+      console.log(`Created permission template: ${template.name}`);
+    }
+  }
+
+  // Create default system settings
+  const systemSettings = [
+    {
+      key: "REQUIRE_TWO_FACTOR",
+      value: "false",
+      description: "Require two-factor authentication for all users",
+      category: "SECURITY",
+    },
+    {
+      key: "ALLOW_REGISTRATION",
+      value: "false",
+      description: "Allow users to register without invitation",
+      category: "SECURITY",
+    },
+    {
+      key: "DEFAULT_SESSION_TIMEOUT",
+      value: "30",
+      description: "Default session timeout in minutes",
+      category: "SECURITY",
+    },
+    {
+      key: "MAX_FILE_SIZE",
+      value: "104857600", // 100MB
+      description: "Maximum file size in bytes",
+      category: "GENERAL",
+    },
+    {
+      key: "COMPANY_NAME",
+      value: "VaultSpace",
+      description: "Company name for branding",
+      category: "BRANDING",
+    },
+    {
+      key: "SUPPORT_EMAIL",
+      value: "support@vaultspace.com",
+      description: "Support email address",
+      category: "GENERAL",
+    },
+  ];
+
+  for (const setting of systemSettings) {
+    const existing = await db.systemSettings.findUnique({
+      where: { key: setting.key }
+    });
+    
+    if (!existing) {
+      await db.systemSettings.create({
+        data: setting
+      });
+      console.log(`Created system setting: ${setting.key}`);
+    }
+  }
+
   // Create super admin user
   const adminEmail = "admin@dataroom.com";
   const existingAdmin = await db.user.findUnique({
@@ -102,6 +312,7 @@ async function setup() {
         title: "Administrator",
         isActive: true,
         isEmailVerified: true,
+        isSuperAdmin: true, // Mark as system super admin
       }
     });
 
@@ -121,12 +332,12 @@ async function setup() {
       }
     });
 
-    // Grant admin access to the system administration data room
+    // Grant ROOM_OWNER access to the system administration data room with all permissions
     await db.userRoomAccess.create({
       data: {
         userId: adminUser.id,
         dataRoomId: adminDataRoom.id,
-        role: "ADMIN",
+        role: "ROOM_OWNER",
         canView: true,
         canDownload: true,
         canPrint: true,
@@ -135,6 +346,9 @@ async function setup() {
         canInvite: true,
         canManageQA: true,
         canViewAudit: true,
+        canManageUsers: true,
+        canManageGroups: true,
+        canManageRoom: true,
       }
     });
 

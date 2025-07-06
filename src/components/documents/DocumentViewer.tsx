@@ -11,11 +11,13 @@ import {
   Plus,
   Save,
   Lock,
-  Unlock
+  Unlock,
+  Star
 } from "lucide-react";
 import { Button } from "~/components/ui/Button";
 import { useTRPC } from "~/trpc/react";
 import { formatDate } from "~/lib/utils";
+import { useToken } from "~/stores/auth";
 
 interface DocumentViewerProps {
   fileId: number;
@@ -26,6 +28,7 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
   const [document, setDocument] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
   const [showAnnotations, setShowAnnotations] = useState(true);
+  const [isFavorited, setIsFavorited] = useState(false);
   const [newNote, setNewNote] = useState({
     content: '',
     isPrivate: false,
@@ -37,20 +40,24 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
   const [rotation, setRotation] = useState(0);
   const viewerRef = useRef<HTMLDivElement>(null);
 
+  const token = useToken();
   const trpc = useTRPC();
   const getDocumentContent = useQuery(trpc.getDocumentContent.queryOptions({
-    token: localStorage.getItem('auth-token') || '',
+    token: token || '',
     fileId,
   }));
   const getDocumentNotes = useQuery(trpc.getDocumentNotes.queryOptions({
-    token: localStorage.getItem('auth-token') || '',
+    token: token || '',
     fileId,
   }));
   const createDocumentNote = useMutation(trpc.createDocumentNote.mutationOptions());
+  const toggleFileFavorite = useMutation(trpc.toggleFileFavorite.mutationOptions());
 
   useEffect(() => {
     if (getDocumentContent.data) {
       setDocument(getDocumentContent.data);
+      // Check if file is favorited (you might want to add this to the getDocumentContent response)
+      setIsFavorited(getDocumentContent.data.isFavorited || false);
     }
   }, [getDocumentContent.data]);
 
@@ -61,7 +68,6 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
   }, [getDocumentNotes.data]);
 
   const handleSaveNote = async () => {
-    const token = localStorage.getItem('auth-token');
     if (!token || !newNote.content.trim()) return;
 
     try {
@@ -84,6 +90,20 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
       getDocumentNotes.refetch();
     } catch (error) {
       console.error('Failed to save note:', error);
+    }
+  };
+
+  const handleToggleFavorite = async () => {
+    if (!token) return;
+
+    try {
+      const result = await toggleFileFavorite.mutateAsync({
+        token,
+        fileId,
+      });
+      setIsFavorited(result.isFavorited);
+    } catch (error) {
+      console.error('Failed to toggle favorite:', error);
     }
   };
 
@@ -126,13 +146,14 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
 
     if (mimeType === 'application/pdf') {
       return (
-        <div className="relative">
+        <div className="relative w-full h-full">
           <iframe
             src={presignedUrl}
             className="w-full h-full border-0"
             style={{ 
               transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-              transformOrigin: 'top left'
+              transformOrigin: 'top left',
+              minHeight: '100%'
             }}
           />
           {watermarkOverlay}
@@ -142,7 +163,7 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
 
     if (mimeType.startsWith('image/')) {
       return (
-        <div className="relative flex items-center justify-center">
+        <div className="relative w-full h-full flex items-center justify-center">
           <img
             src={presignedUrl}
             alt={file.name}
@@ -159,13 +180,14 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
 
     if (mimeType === 'text/plain') {
       return (
-        <div className="relative">
+        <div className="relative w-full h-full">
           <iframe
             src={presignedUrl}
             className="w-full h-full border-0 bg-white"
             style={{ 
               transform: `scale(${zoom / 100})`,
-              transformOrigin: 'top left'
+              transformOrigin: 'top left',
+              minHeight: '100%'
             }}
           />
           {watermarkOverlay}
@@ -177,13 +199,14 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
     if (mimeType.includes('officedocument') || mimeType.includes('ms-')) {
       const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(presignedUrl)}`;
       return (
-        <div className="relative">
+        <div className="relative w-full h-full">
           <iframe
             src={officeViewerUrl}
             className="w-full h-full border-0"
             style={{ 
               transform: `scale(${zoom / 100})`,
-              transformOrigin: 'top left'
+              transformOrigin: 'top left',
+              minHeight: '100%'
             }}
           />
           {watermarkOverlay}
@@ -216,7 +239,7 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white w-full h-full max-w-7xl max-h-[90vh] rounded-lg shadow-xl flex flex-col">
+      <div className="bg-white w-full h-full max-w-7xl max-h-[95vh] rounded-lg shadow-xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center space-x-4">
@@ -253,6 +276,14 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
             <Button
               variant="ghost"
               size="sm"
+              onClick={handleToggleFavorite}
+              disabled={toggleFileFavorite.isPending}
+            >
+              <Star className={`h-4 w-4 ${isFavorited ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowAnnotations(!showAnnotations)}
             >
               <MessageSquare className="h-4 w-4 mr-2" />
@@ -285,7 +316,7 @@ export function DocumentViewer({ fileId, onClose }: DocumentViewerProps) {
         {/* Content */}
         <div className="flex-1 flex">
           {/* Document Viewer */}
-          <div className="flex-1 relative overflow-auto" ref={viewerRef}>
+          <div className="flex-1 relative overflow-auto min-h-0" ref={viewerRef}>
             {renderDocumentContent()}
           </div>
 

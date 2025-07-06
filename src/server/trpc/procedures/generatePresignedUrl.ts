@@ -9,7 +9,7 @@ export const generatePresignedUrl = baseProcedure
   .input(z.object({
     token: z.string(),
     dataRoomId: z.number(),
-    folderId: z.number().optional(),
+    folderId: z.number().nullable().optional(),
     fileName: z.string(),
     fileSize: z.number(),
     mimeType: z.string(),

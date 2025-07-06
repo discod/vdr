@@ -17,7 +17,7 @@ interface FileWithProgress {
 
 interface FileUploadProps {
   dataRoomId: number;
-  folderId?: number;
+  folderId?: number | null;
   onUploadComplete?: (files: any[]) => void;
   maxFiles?: number;
   acceptedTypes?: string[];

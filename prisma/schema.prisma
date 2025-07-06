@@ -22,6 +22,7 @@ model User {
   phone           String?
   isActive        Boolean  @default(true)
   isEmailVerified Boolean  @default(false)
+  isSuperAdmin    Boolean  @default(false) // System-wide admin privileges
   lastLoginAt     DateTime?
   createdAt       DateTime @default(now())
   
@@ -38,8 +39,95 @@ model User {
   uploadedFiles    File[]            @relation("FileUploader")
   preferences      UserPreferences?
   createdShareLinks FileShareLink[]
+  createdFolderShares FolderShareLink[]
+  fileFavorites    FileFavorite[]
+  accessRequests   AccessRequest[]
+  reviewedRequests AccessRequest[]   @relation("AccessRequestReviewer")
+  groupMemberships UserGroupMembership[]
   
   @@map("users")
+}
+
+// User Groups for permission management
+model UserGroup {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  dataRoomId  Int
+  color       String?  // Hex color for UI display
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  dataRoom    DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  memberships UserGroupMembership[]
+  permissions UserGroupPermission[]
+  
+  @@unique([dataRoomId, name])
+  @@map("user_groups")
+}
+
+// Many-to-many relationship between users and groups
+model UserGroupMembership {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  groupId   Int
+  createdAt DateTime @default(now())
+  
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group     UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, groupId])
+  @@map("user_group_memberships")
+}
+
+// Group-level permissions for folders
+model UserGroupPermission {
+  id         Int      @id @default(autoincrement())
+  groupId    Int
+  folderId   Int?     // null means root level permissions
+  canView    Boolean  @default(true)
+  canDownload Boolean @default(true)
+  canUpload  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  
+  // Relations
+  group      UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  folder     Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, folderId])
+  @@map("user_group_permissions")
+}
+
+// Permission templates for quick role assignment
+model PermissionTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String   // "Standard Viewer", "Finance Team", etc.
+  description String?
+  role        String   // Base role this template is for
+  isDefault   Boolean  @default(false)
+  isSystem    Boolean  @default(false) // System templates vs custom
+  
+  // Template permissions
+  canView         Boolean @default(true)
+  canDownload     Boolean @default(true)
+  canPrint        Boolean @default(true)
+  canUpload       Boolean @default(false)
+  canEdit         Boolean @default(false)
+  canInvite       Boolean @default(false)
+  canManageQA     Boolean @default(false)
+  canViewAudit    Boolean @default(false)
+  canManageUsers  Boolean @default(false)
+  canManageGroups Boolean @default(false)
+  canManageRoom   Boolean @default(false)
+  
+  // Access restrictions
+  allowedCountries String[] // Default country restrictions
+  sessionTimeout   Int?     // Default session timeout in minutes
+  
+  createdAt       DateTime @default(now())
+  
+  @@map("permission_templates")
 }
 
 // Data Room management
@@ -73,6 +161,9 @@ model DataRoom {
   auditLogs         AuditLog[]
   qaQuestions       QAQuestion[]
   invitations       Invitation[]
+  accessRequests    AccessRequest[]
+  userGroups        UserGroup[]
+  folderShares      FolderShareLink[]
   
   @@map("data_rooms")
 }
@@ -91,6 +182,9 @@ model Folder {
   parent      Folder?  @relation("FolderHierarchy", fields: [parentId], references: [id])
   children    Folder[] @relation("FolderHierarchy")
   files       File[]
+  accessRequests AccessRequest[]
+  groupPermissions UserGroupPermission[]
+  shareLinks        FolderShareLink[]
   
   @@map("folders")
 }
@@ -127,6 +221,7 @@ model File {
   notes           DocumentNote[]
   auditLogs       AuditLog[]
   shareLinks      FileShareLink[]
+  favorites       FileFavorite[]
   
   @@map("files")
 }
@@ -148,12 +243,27 @@ model FileVersion {
   @@map("file_versions")
 }
 
+// File favorites
+model FileFavorite {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  fileId    Int
+  createdAt DateTime @default(now())
+  
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, fileId])
+  @@map("file_favorites")
+}
+
 // User access to data rooms
 model UserRoomAccess {
   id         Int      @id @default(autoincrement())
   userId     Int
   dataRoomId Int
-  role       String   // 'ADMIN', 'CONTRIBUTOR', 'VIEWER', 'AUDITOR'
+  role       String   // 'ROOM_OWNER', 'ADMIN', 'CONTRIBUTOR', 'VIEWER', 'AUDITOR'
   
   // Granular permissions
   canView         Boolean @default(true)
@@ -164,6 +274,9 @@ model UserRoomAccess {
   canInvite       Boolean @default(false)
   canManageQA     Boolean @default(false)
   canViewAudit    Boolean @default(false)
+  canManageUsers  Boolean @default(false) // Manage user roles and permissions
+  canManageGroups Boolean @default(false) // Manage user groups
+  canManageRoom   Boolean @default(false) // Room settings, branding, etc.
   
   // Access restrictions
   ipWhitelist     String[] // Array of IP addresses/ranges
@@ -188,6 +301,7 @@ model Invitation {
   senderId    Int
   receiverId  Int?
   role        String   // Target role for the invitation
+  groupIds    Int[]    // Groups to assign user to upon acceptance
   message     String?
   token       String   @unique
   status      String   @default("PENDING") // 'PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED'
@@ -201,6 +315,27 @@ model Invitation {
   receiver    User?    @relation("InvitationReceiver", fields: [receiverId], references: [id])
   
   @@map("invitations")
+}
+
+// Access requests
+model AccessRequest {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  dataRoomId  Int
+  folderId    Int?     // Optional - for folder-specific access requests
+  reason      String?
+  status      String   @default("PENDING") // 'PENDING', 'APPROVED', 'DENIED'
+  reviewedBy  Int?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataRoom    DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folder      Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  reviewer    User?    @relation("AccessRequestReviewer", fields: [reviewedBy], references: [id])
+  
+  @@map("access_requests")
 }
 
 // Q&A system
@@ -388,4 +523,54 @@ model FileShareAccess {
   shareLink       FileShareLink @relation(fields: [shareId], references: [id], onDelete: Cascade)
   
   @@map("file_share_access")
+}
+
+// Folder sharing links
+model FolderShareLink {
+  id              Int      @id @default(autoincrement())
+  token           String   @unique
+  folderId        Int?     // null for root folder sharing
+  dataRoomId      Int      // Always required for folder sharing
+  createdById     Int
+  recipientEmail  String?
+  recipientName   String?
+  message         String?
+  
+  // Access controls
+  maxViews        Int?
+  currentViews    Int      @default(0)
+  expiresAt       DateTime?
+  password        String?
+  
+  // Permissions
+  allowDownload   Boolean  @default(true)
+  allowPrint      Boolean  @default(true)
+  requireAuth     Boolean  @default(false)
+  
+  // Tracking
+  isActive        Boolean  @default(true)
+  lastAccessedAt  DateTime?
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  folder          Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  dataRoom        DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  createdBy       User     @relation(fields: [createdById], references: [id])
+  accessLogs      FolderShareAccess[]
+  
+  @@map("folder_share_links")
+}
+
+// Folder share access logs
+model FolderShareAccess {
+  id              Int      @id @default(autoincrement())
+  shareId         Int
+  ipAddress       String?
+  userAgent       String?
+  accessedAt      DateTime @default(now())
+  
+  // Relations
+  shareLink       FolderShareLink @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  
+  @@map("folder_share_access")
 }

@@ -8,7 +8,7 @@ export const confirmFileUpload = baseProcedure
   .input(z.object({
     token: z.string(),
     dataRoomId: z.number(),
-    folderId: z.number().optional(),
+    folderId: z.number().nullish(),
     fileName: z.string(),
     originalName: z.string(),
     fileSize: z.number(),
