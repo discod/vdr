@@ -1,0 +1,391 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://postgres:postgres@postgres/app" // hardcoded because it's an internal docker connection
+}
+
+// User management
+model User {
+  id              Int      @id @default(autoincrement())
+  email           String   @unique
+  password        String
+  firstName       String
+  lastName        String
+  company         String?
+  title           String?
+  phone           String?
+  isActive        Boolean  @default(true)
+  isEmailVerified Boolean  @default(false)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  createdRooms     DataRoom[]        @relation("RoomCreator")
+  userRoomAccess   UserRoomAccess[]
+  auditLogs        AuditLog[]
+  qaQuestions      QAQuestion[]
+  qaAnswers        QAAnswer[]
+  documentNotes    DocumentNote[]
+  invitationsSent  Invitation[]      @relation("InvitationSender")
+  invitationsReceived Invitation[]   @relation("InvitationReceiver")
+  sessions         UserSession[]
+  uploadedFiles    File[]            @relation("FileUploader")
+  preferences      UserPreferences?
+  createdShareLinks FileShareLink[]
+  
+  @@map("users")
+}
+
+// Data Room management
+model DataRoom {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  type        String   // 'M&A', 'FUNDRAISING', 'IPO', 'AUDIT', 'LEGAL', 'CUSTOM'
+  status      String   @default("ACTIVE") // 'ACTIVE', 'ARCHIVED', 'EXPIRED'
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  
+  // Settings
+  allowDownload     Boolean @default(true)
+  allowPrint        Boolean @default(true)
+  allowCopyPaste    Boolean @default(false)
+  watermarkEnabled  Boolean @default(true)
+  requireNDA        Boolean @default(false)
+  
+  // Branding
+  customLogo        String?
+  customColors      String? // JSON string for custom colors
+  customSubdomain   String? @unique
+  
+  // Relations
+  creatorId         Int
+  creator           User              @relation("RoomCreator", fields: [creatorId], references: [id])
+  folders           Folder[]
+  files             File[]
+  userAccess        UserRoomAccess[]
+  auditLogs         AuditLog[]
+  qaQuestions       QAQuestion[]
+  invitations       Invitation[]
+  
+  @@map("data_rooms")
+}
+
+// Folder structure
+model Folder {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  parentId    Int?
+  dataRoomId  Int
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  dataRoom    DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  parent      Folder?  @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children    Folder[] @relation("FolderHierarchy")
+  files       File[]
+  
+  @@map("folders")
+}
+
+// File management
+model File {
+  id              Int      @id @default(autoincrement())
+  name            String
+  originalName    String
+  size            Int
+  mimeType        String
+  checksum        String
+  storageKey      String   // MinIO object key
+  version         Int      @default(1)
+  isLatestVersion Boolean  @default(true)
+  uploadedAt      DateTime @default(now())
+  
+  // OCR and indexing
+  ocrText         String?
+  tags            String[] // Array of tags
+  
+  // File sharing
+  shareEnabled    Boolean  @default(false)
+  
+  // Relations
+  dataRoomId      Int
+  folderId        Int?
+  uploaderId      Int
+  
+  dataRoom        DataRoom       @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folder          Folder?        @relation(fields: [folderId], references: [id])
+  uploader        User           @relation("FileUploader", fields: [uploaderId], references: [id])
+  versions        FileVersion[]
+  notes           DocumentNote[]
+  auditLogs       AuditLog[]
+  shareLinks      FileShareLink[]
+  
+  @@map("files")
+}
+
+// File versioning
+model FileVersion {
+  id          Int      @id @default(autoincrement())
+  fileId      Int
+  version     Int
+  size        Int
+  storageKey  String   // MinIO object key for this version
+  checksum    String
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  file        File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  
+  @@unique([fileId, version])
+  @@map("file_versions")
+}
+
+// User access to data rooms
+model UserRoomAccess {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  dataRoomId Int
+  role       String   // 'ADMIN', 'CONTRIBUTOR', 'VIEWER', 'AUDITOR'
+  
+  // Granular permissions
+  canView         Boolean @default(true)
+  canDownload     Boolean @default(true)
+  canPrint        Boolean @default(true)
+  canUpload       Boolean @default(false)
+  canEdit         Boolean @default(false)
+  canInvite       Boolean @default(false)
+  canManageQA     Boolean @default(false)
+  canViewAudit    Boolean @default(false)
+  
+  // Access restrictions
+  ipWhitelist     String[] // Array of IP addresses/ranges
+  allowedCountries String[] // Array of country codes
+  expiresAt       DateTime?
+  
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataRoom        DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, dataRoomId])
+  @@map("user_room_access")
+}
+
+// Invitations
+model Invitation {
+  id          Int      @id @default(autoincrement())
+  email       String
+  dataRoomId  Int
+  senderId    Int
+  receiverId  Int?
+  role        String   // Target role for the invitation
+  message     String?
+  token       String   @unique
+  status      String   @default("PENDING") // 'PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED'
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  acceptedAt  DateTime?
+  
+  // Relations
+  dataRoom    DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  sender      User     @relation("InvitationSender", fields: [senderId], references: [id])
+  receiver    User?    @relation("InvitationReceiver", fields: [receiverId], references: [id])
+  
+  @@map("invitations")
+}
+
+// Q&A system
+model QAQuestion {
+  id          Int      @id @default(autoincrement())
+  question    String
+  context     String?  // Additional context or reference
+  isPrivate   Boolean  @default(false)
+  status      String   @default("OPEN") // 'OPEN', 'ANSWERED', 'CLOSED'
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  dataRoomId  Int
+  authorId    Int
+  
+  dataRoom    DataRoom   @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  author      User       @relation(fields: [authorId], references: [id])
+  answers     QAAnswer[]
+  
+  @@map("qa_questions")
+}
+
+model QAAnswer {
+  id          Int      @id @default(autoincrement())
+  answer      String
+  isPrivate   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  questionId  Int
+  authorId    Int
+  
+  question    QAQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  author      User       @relation(fields: [authorId], references: [id])
+  
+  @@map("qa_answers")
+}
+
+// Document notes and annotations
+model DocumentNote {
+  id          Int      @id @default(autoincrement())
+  content     String
+  isPrivate   Boolean  @default(false)
+  pageNumber  Int?     // For PDF annotations
+  coordinates String?  // JSON string for annotation coordinates
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  fileId      Int
+  authorId    Int
+  
+  file        File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  author      User     @relation(fields: [authorId], references: [id])
+  
+  @@map("document_notes")
+}
+
+// Audit logging
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  action      String   // 'VIEW', 'DOWNLOAD', 'UPLOAD', 'EDIT', 'DELETE', 'LOGIN', 'INVITE', etc.
+  resource    String   // 'FILE', 'FOLDER', 'ROOM', 'USER', etc.
+  resourceId  Int?
+  details     String?  // JSON string with additional details
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime @default(now())
+  
+  // Relations
+  userId      Int?
+  dataRoomId  Int?
+  fileId      Int?
+  
+  user        User?     @relation(fields: [userId], references: [id])
+  dataRoom    DataRoom? @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  file        File?     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  
+  @@map("audit_logs")
+}
+
+// Room templates
+model RoomTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  type        String   // 'M&A', 'FUNDRAISING', 'IPO', 'AUDIT', 'LEGAL'
+  structure   String   // JSON string defining folder structure
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  @@map("room_templates")
+}
+
+// User sessions for JWT token management
+model UserSession {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  token       String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_sessions")
+}
+
+// System-wide settings (super admin only)
+model SystemSettings {
+  id                Int      @id @default(autoincrement())
+  key               String   @unique
+  value             String?
+  description       String?
+  category          String   // 'SMTP', 'SECURITY', 'BRANDING', 'GENERAL'
+  isEncrypted       Boolean  @default(false)
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+  
+  @@map("system_settings")
+}
+
+// User preferences and settings
+model UserPreferences {
+  id                    Int      @id @default(autoincrement())
+  userId                Int      @unique
+  theme                 String   @default("light") // 'light', 'dark', 'system'
+  language              String   @default("en")
+  timezone              String   @default("UTC")
+  emailNotifications    Boolean  @default(true)
+  browserNotifications  Boolean  @default(false)
+  twoFactorEnabled      Boolean  @default(false)
+  sessionTimeout        Int      @default(30) // minutes
+  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now())
+  
+  // Relations
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_preferences")
+}
+
+// File sharing links
+model FileShareLink {
+  id              Int      @id @default(autoincrement())
+  token           String   @unique
+  fileId          Int
+  createdById     Int
+  recipientEmail  String?
+  recipientName   String?
+  message         String?
+  
+  // Access controls
+  maxViews        Int?
+  currentViews    Int      @default(0)
+  expiresAt       DateTime?
+  password        String?
+  
+  // Permissions
+  allowDownload   Boolean  @default(true)
+  allowPrint      Boolean  @default(true)
+  requireAuth     Boolean  @default(false)
+  
+  // Tracking
+  isActive        Boolean  @default(true)
+  lastAccessedAt  DateTime?
+  createdAt       DateTime @default(now())
+  
+  // Relations
+  file            File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdBy       User     @relation(fields: [createdById], references: [id])
+  accessLogs      FileShareAccess[]
+  
+  @@map("file_share_links")
+}
+
+// File share access logs
+model FileShareAccess {
+  id              Int      @id @default(autoincrement())
+  shareId         Int
+  ipAddress       String?
+  userAgent       String?
+  accessedAt      DateTime @default(now())
+  
+  // Relations
+  shareLink       FileShareLink @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  
+  @@map("file_share_access")
+}
